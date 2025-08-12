@@ -43,12 +43,6 @@ for arg in "$@"; do
 	esac
 done
 
-# User check.
-if [ "$(whoami)" != "_nvr" ]; then
-	printf "Please run as user '_nvr'   \"sudo -u _nvr ./%s\"\\n" "$(basename "$0")"
-	exit 1
-fi
-
 # Working directory check.
 if [ ! -e "$(pwd)/go.mod" ]; then
 	printf "The current working directory must be the project home and contain 'go.mod'\\n%s\\n" "$(pwd)"
