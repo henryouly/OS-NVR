@@ -133,7 +133,16 @@ func start(
 		return fmt.Errorf("calculate ffmpeg outputs: %w", err)
 	}
 
-	i := newInstance(sendRequest, input, config, cache.previewCache, logf)
+	objectDetector, err := NewObjectDetector(openvinoConfig.Host, openvinoConfig.ModelName, openvinoConfig.ModelConfig.InputTensor)
+	if err != nil {
+		return fmt.Errorf("failed to create object detector: %w", err)
+	}
+	// TODO: Move it to a separate scope to close
+	// defer objectDetector.Close()
+	detectionService := NewDetectionService(objectDetector)
+	detectionService.Start(openvinoConfig.NumThreads)
+
+	i := newInstance(sendRequest, input, config, cache.previewCache, logf, detectionService)
 
 	i.outputs = *outputs
 	i.reverseValues = *reverseValues
@@ -170,6 +179,8 @@ type instance struct {
 
 	// watchdogTimer restarts process if it stops outputting frames.
 	watchdogTimer *time.Timer
+
+	detectionService *DetectionService
 }
 
 func newInstance(
@@ -178,6 +189,7 @@ func newInstance(
 	c config,
 	previewCache *previewCache,
 	logf log.Func,
+	detectionService *DetectionService,
 ) *instance {
 	return &instance{
 		c:         c,
@@ -193,6 +205,7 @@ func newInstance(
 			CompressionLevel: png.BestSpeed,
 		},
 		previewCache: previewCache,
+		detectionService: detectionService,
 	}
 }
 
@@ -433,7 +446,6 @@ func startReader(
 }
 
 func (i *instance) runReader(ctx context.Context, stdout io.Reader) error {
-	eventDuration := ffmpeg.FeedRateToDuration(i.c.feedRate)
 
 	img := NewRGB24(image.Rect(0, 0, i.outputs.width, i.outputs.height))
 	inputBuffer := make([]byte, i.outputs.frameSize)
@@ -455,27 +467,25 @@ func (i *instance) runReader(ctx context.Context, stdout io.Reader) error {
 		outputBuffer = b.Bytes()
 		i.previewCache.Set(i.c.monitorID, outputBuffer)
 
-		request := detectRequest{
-			DetectorName: i.c.detectorName,
-			Data:         &outputBuffer,
-			// Preprocess:   []string{"grayscale"},
-			Detect: i.c.thresholds,
+		request := DetectionTask{
+			StreamName: i.c.monitorID,
+			Image:     img,
 		}
 
-		ctx2, cancel := context.WithTimeout(ctx, eventDuration*2)
-		defer cancel()
-		detections, err := i.sendRequest(ctx2, request)
-		if err != nil {
-			return fmt.Errorf("send frame: %w", err)
-		}
+		// TODO: Add detection task timeout
+		// eventDuration := ffmpeg.FeedRateToDuration(i.c.feedRate)
+		// ctx2, cancel := context.WithTimeout(ctx, eventDuration*2)
+		// defer cancel()
+		// i.detectionService.AddTask(ctx2, request)
+		i.detectionService.AddTask(request)
 
-		parsed := parseDetections(i.c.minSize, i.c.maxSize, i.reverseValues, *detections)
-		if len(parsed) == 0 {
-			continue
-		}
+		// parsed := parseDetections(i.c.minSize, i.c.maxSize, i.reverseValues, *detections)
+		// if len(parsed) == 0 {
+		// 	continue
+		// }
 
-		i.logf(log.LevelDebug, "trigger: label:%v score:%.1f",
-			parsed[0].Label, parsed[0].Score)
+		// i.logf(log.LevelDebug, "trigger: label:%v score:%.1f",
+		// 	parsed[0].Label, parsed[0].Score)
 
 		// err = i.sendEvent(storage.Event{
 		// 	Time:        t,
@@ -498,17 +508,17 @@ func parseDetections(
 ) []storage.Detection {
 	parsed := []storage.Detection{
 		// Populate parsed detections
-		storage.Detection{
-			Label: "person",
-			Score: 0.9,
-		},
+		// storage.Detection{
+		// 	Label: "person",
+		// 	Score: 0.9,
+		// },
 	}
 	return parsed
 }
 
-type sendRequestFunc func(context.Context, detectRequest) (*detections, error)
+type sendRequestFunc func(context.Context, DetectionTask) (*detections, error)
 
-func sendRequest(ctx context.Context, request detectRequest) (*detections, error) {
+func sendRequest(ctx context.Context, request DetectionTask) (*detections, error) {
 	// Implementation of sending the request to the detection service
 	return &detections{}, nil
 }

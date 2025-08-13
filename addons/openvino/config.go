@@ -21,11 +21,12 @@ var (
 		ModelName string `yaml:"model_name"`
 		NumThreads int    `yaml:"num_threads"`
 		ModelConfig struct {
-			ConfidenceThreshold float64 `yaml:"confidence_threshold"`
-			IOUThreshold        float64 `yaml:"iou_threshold"`
-			NumClasses          int      `yaml:"num_classes"`
-			ClassNames          []string `yaml:"class_names"`
-			Preprocess          struct {
+			InputTensor            string  `yaml:"input_tensor"`
+			ConfidenceThreshold   float64 `yaml:"confidence_threshold"`
+			IOUThreshold          float64 `yaml:"iou_threshold"`
+			NumClasses            int      `yaml:"num_classes"`
+			ClassNames            []string `yaml:"class_names"`
+			Preprocess            struct {
 				Resize struct {
 					Width  int `yaml:"width"`
 					Height int `yaml:"height"`
