@@ -524,11 +524,52 @@ func parseDetections(
 	detections []BoundingBox,
 ) []storage.Detection {
 	parsed := []storage.Detection{}
-	for _, box := range detections {
-		if box.ClassId >= 0 && box.ClassId < len(openvinoConfig.ModelConfig.ClassNames) && box.ClassId == 0{
+	for _, detection := range detections {
+		score := float64(detection.Conf)
+		label := openvinoConfig.ModelConfig.ClassNames[detection.ClassId]
+
+		convX := func(input float32) int {
+			return int(reverse.uncropXfunc(input) *
+				reverse.paddingXmultiplier * 100)
+		}
+		convY := func(input float32) int {
+			return int(reverse.uncropYfunc(input) *
+				reverse.paddingYmultiplier * 100)
+		}
+
+		top := convY(detection.Xmin)
+		left := convX(detection.Ymin)
+		bottom := convY(detection.Ymax)
+		right := convX(detection.Xmax)
+
+		height := bottom - top
+		width := right - left
+
+		sizePercent := float64(width*height) / 100
+		if sizePercent < minSize {
+			continue
+		}
+		if maxSize != 0 && sizePercent > maxSize {
+			continue
+		}
+
+		// centerY := top + (height / 2)
+		// centerX := left + (width / 2)
+
+		// centerInsideMask := ffmpeg.VertexInsidePoly(centerY, centerX, mask)
+		// if centerInsideMask {
+		// 	continue
+		// }
+
+		if detection.ClassId >= 0 && 
+			 detection.ClassId < len(openvinoConfig.ModelConfig.ClassNames) &&
+			 detection.ClassId == 0 {
 			parsed = append(parsed, storage.Detection{
-				Label:      openvinoConfig.ModelConfig.ClassNames[box.ClassId],
-				Score:      float64(box.Conf),
+				Label: label,
+				Score: score,
+				Region: &storage.Region{
+					Rect: &ffmpeg.Rect{top, left, bottom, right},
+				},
 			})
 		}
 	}
