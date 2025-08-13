@@ -32,7 +32,7 @@ const (
 	numClasses         = 80
 
 	// Post-processing thresholds
-	minConfidence = 0.5
+	minConfidence = 0.6
 	iouThreshold  = 0.45
 
 	// sizeOfHalf is the size of a float16 in bytes.
@@ -107,11 +107,11 @@ func preprocessImage(img image.Image) (*framework.TensorProto, error) {
 			// NCHW format: R-plane, then G-plane, then B-plane.
 			
 			// Red channel -> first plane
-			halfVals[pixelIdx] = int32(float32ToHalf(float32(r) / 255.0))
+			halfVals[pixelIdx] = int32(float32ToHalf(float32((r & 255) / 255.0)))
 			// Green channel -> second plane (offset by the size of one plane)
-			halfVals[pixelIdx+numPixels] = int32(float32ToHalf(float32(g) / 255.0))
+			halfVals[pixelIdx+numPixels] = int32(float32ToHalf(float32((g & 255) / 255.0)))
 			// Blue channel -> third plane (offset by the size of two planes)
-			halfVals[pixelIdx+(2*numPixels)] = int32(float32ToHalf(float32(b) / 255.0))
+			halfVals[pixelIdx+(2*numPixels)] = int32(float32ToHalf(float32((b & 255) / 255.0)))
 		}
 	}
 
