@@ -24,6 +24,21 @@ import (
 func init() {
 	nvr.RegisterLogSource([]string{"openvino"})
 	nvr.RegisterMonitorInputProcessHook(onInputProcessStart)
+
+	nvr.RegisterAppRunHook(func(ctx context.Context, app *nvr.App) error {
+		onEnv(app.Env)
+		return nil
+	})
+}
+
+func onEnv(env storage.ConfigEnv) {
+	configPath := env.ConfigDir + "/openvino.yaml"
+	var err error
+	err = parseRawConfig(configPath)
+	if err != nil {
+		fmt.Printf("openvino: config: %v, %v\n", err, configPath)
+		return
+	}
 }
 
 func onInputProcessStart(ctx context.Context, i *monitor.InputProcess, _ *[]string) {

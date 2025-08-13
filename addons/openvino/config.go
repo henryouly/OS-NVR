@@ -6,10 +6,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"nvr/pkg/ffmpeg"
 	"nvr/pkg/monitor"
 	"strconv"
 	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
+var (
+	openvinoConfig struct {
+		Host      string `yaml:"host"`
+		ModelName string `yaml:"model_name"`
+	}
 )
 
 type config struct {
@@ -60,6 +70,19 @@ func parseConfig(c monitor.Config) (*config, bool, error) { //nolint:funlen
 		recDuration:     120 * time.Second,
 		useSubStream:    false,
 	}, enable, nil
+}
+
+func parseRawConfig(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read config file: %w", err)
+	}
+
+	if err := yaml.Unmarshal(data, &openvinoConfig); err != nil {
+		return fmt.Errorf("unmarshal config: %w", err)
+	}
+
+	return nil
 }
 
 func parseThresholds(rawThresholds string) (thresholds, error) {
