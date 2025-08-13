@@ -90,28 +90,34 @@ func (od *ObjectDetector) DetectObjects(img image.Image) ([]BoundingBox, error) 
 // preprocessImage resizes, normalizes, and converts image data to a DT_HALF tensor.
 func preprocessImage(img image.Image) (*framework.TensorProto, error) {
 	numPixels := int(inputWidth * inputHeight)
-
-	// 2. Pre-allocate a single slice for the final NCHW data.
-	// This avoids creating three intermediate slices and concatenating them.
 	halfVals := make([]int32, 3*numPixels)
 
-	// 3. Iterate, convert, and place data directly into the final slice.
+	// Perform a type assertion to get the concrete *RGB24 type
+	rgb24Img, ok := img.(*RGB24)
+	if !ok {
+		// This case should ideally not be reached given how the image is created.
+		// If it does, it means an unexpected image type was passed.
+		return nil, fmt.Errorf("expected *RGB24 image type, got %T", img)
+	}
+
+	// Iterate, convert, and place data directly into the final slice.
+	// The Pix slice is laid out as R, G, B, R, G, B, ...
+	// rgb24Img.Stride is 3 * width
 	for y := 0; y < int(inputHeight); y++ {
 		for x := 0; x < int(inputWidth); x++ {
-			pixelIdx := y*int(inputWidth) + x
-			c := img.At(x, y)
-			r, g, b, _ := c.RGBA() // Ignore alpha channel
+			// Calculate the index in the Pix slice for the current pixel's R component
+			pixelOffset := y*rgb24Img.Stride + x*3
 
-			// Directly normalize, convert to half-float, and place into the correct
-			// channel plane within the single `halfVals` slice.
+			// Directly get the uint8 R, G, B values
+			r := rgb24Img.Pix[pixelOffset]
+			g := rgb24Img.Pix[pixelOffset+1]
+			b := rgb24Img.Pix[pixelOffset+2]
+
+			// Normalize and convert to half-float
 			// NCHW format: R-plane, then G-plane, then B-plane.
-			
-			// Red channel -> first plane
-			halfVals[pixelIdx] = int32(float32ToHalf(float32((r & 255) / 255.0)))
-			// Green channel -> second plane (offset by the size of one plane)
-			halfVals[pixelIdx+numPixels] = int32(float32ToHalf(float32((g & 255) / 255.0)))
-			// Blue channel -> third plane (offset by the size of two planes)
-			halfVals[pixelIdx+(2*numPixels)] = int32(float32ToHalf(float32((b & 255) / 255.0)))
+			halfVals[y*int(inputWidth)+x] = int32(float32ToHalf(float32(r) / 255.0)) // Red channel
+			halfVals[y*int(inputWidth)+x+numPixels] = int32(float32ToHalf(float32(g) / 255.0)) // Green channel
+			halfVals[y*int(inputWidth)+x+(2*numPixels)] = int32(float32ToHalf(float32(b) / 255.0)) // Blue channel
 		}
 	}
 
