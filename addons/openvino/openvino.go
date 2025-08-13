@@ -22,6 +22,7 @@ import (
 )
 
 func init() {
+	nvr.RegisterLogSource([]string{"openvino"})
 	nvr.RegisterMonitorInputProcessHook(onInputProcessStart)
 }
 
@@ -42,6 +43,7 @@ func onInputProcessStart(ctx context.Context, i *monitor.InputProcess, _ *[]stri
 		return
 	}
 	if !enable {
+		logf(log.LevelInfo, "openvino is disabled")
 		return
 	}
 	config.fillMissing()
