@@ -459,7 +459,7 @@ func startReader(
 }
 
 func (i *instance) runReader(ctx context.Context, stdout io.Reader) error {
-
+	eventDuration := ffmpeg.FeedRateToDuration(i.c.feedRate)
 	img := NewRGB24(image.Rect(0, 0, i.outputs.width, i.outputs.height))
 	inputBuffer := make([]byte, i.outputs.frameSize)
 	tmpBuffer := []byte{}
@@ -480,17 +480,22 @@ func (i *instance) runReader(ctx context.Context, stdout io.Reader) error {
 		outputBuffer = b.Bytes()
 		i.previewCache.Set(i.c.monitorID, outputBuffer)
 
+		responseChan := make(chan *detections)
+
 		request := DetectionTask{
-			StreamName: i.c.monitorID,
-			Image:     img,
+			StreamName:  i.c.monitorID,
+			Image:      img,
+			ResponseChan: responseChan,
 		}
 
-		// TODO: Add detection task timeout
-		// eventDuration := ffmpeg.FeedRateToDuration(i.c.feedRate)
-		// ctx2, cancel := context.WithTimeout(ctx, eventDuration*2)
-		// defer cancel()
-		// i.detectionService.AddTask(ctx2, request)
-		detectionService.AddTask(request)
+		ctx2, cancel := context.WithTimeout(ctx, eventDuration*2)
+		defer cancel()
+		detections, err := sendRequest(ctx2, request)
+		if err != nil {
+			logf(log.LevelError, "send frame: %v", err)
+			continue
+		}
+		logf(log.LevelDebug, "detections: %v", detections)
 
 		// parsed := parseDetections(i.c.minSize, i.c.maxSize, i.reverseValues, *detections)
 		// if len(parsed) == 0 {
@@ -532,8 +537,21 @@ func parseDetections(
 type sendRequestFunc func(context.Context, DetectionTask) (*detections, error)
 
 func sendRequest(ctx context.Context, request DetectionTask) (*detections, error) {
-	// Implementation of sending the request to the detection service
-	return &detections{}, nil
+	res := request.ResponseChan
+	select {
+	case <-ctx.Done():
+		return nil, context.Canceled
+	default:
+		detectionService.AddTask(request)
+	}
+
+	select {
+	case <-ctx.Done():
+		go func() { <-res }()
+		return nil, context.Canceled
+	case response := <-res:
+		return response, nil
+	}
 }
 
 type detectRequest struct {

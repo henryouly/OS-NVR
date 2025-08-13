@@ -7,25 +7,26 @@ import (
 )
 
 type DetectionTask struct {
-  StreamName string
-  Image      image.Image
+	StreamName   string
+	Image        image.Image
+	ResponseChan chan *detections
 }
 
 type DetectionService struct {
-	queue         chan DetectionTask
-	wg            sync.WaitGroup
+	queue          chan DetectionTask
+	wg             sync.WaitGroup
 	objectDetector *ObjectDetector
 }
 
 func NewDetectionService(objectDetector *ObjectDetector) *DetectionService {
 	return &DetectionService{
-		queue:         make(chan DetectionTask, 256),
+		queue:          make(chan DetectionTask, 256),
 		objectDetector: objectDetector,
 	}
 }
 
 func (ds *DetectionService) Start(numWorkers int) {
-  log.Printf("Starting %d shared detection workers", numWorkers)
+	log.Printf("Starting %d shared detection workers", numWorkers)
 	for i := 0; i < numWorkers; i++ {
 		ds.wg.Add(1)
 		go ds.worker(i + 1)
@@ -44,18 +45,37 @@ func (ds *DetectionService) worker(id int) {
 
 	// This loop will automatically exit when the 'queue' channel is closed.
 	for task := range ds.queue {
-		detection, err := ds.objectDetector.DetectObjects(task.Image)
-    if err != nil {
-      log.Printf("[Worker %d] Failed to run detection for stream %s: %v", id, task.StreamName, err)
-    } else {
-			if len(detection) > 0 && detection[0].ClassId == 0 {
-				log.Printf("[Worker %d] Successfully processed frame from stream %s: %v", id, task.StreamName, detection)
+		boundingBoxes, err := ds.objectDetector.DetectObjects(task.Image)
+		if err != nil {
+			log.Printf("[Worker %d] Failed to run detection for stream %s: %v", id, task.StreamName, err)
+			task.ResponseChan <- &detections{}
+		} else {
+			if len(boundingBoxes) > 0 && boundingBoxes[0].ClassId == 0 {
+				log.Printf("[Worker %d] Successfully processed frame from stream %s: %v", id, task.StreamName, boundingBoxes)
 			}
-    }
-  }
-  log.Printf("Detection worker #%d shut down", id)
+			task.ResponseChan <- convertDetections(boundingBoxes)
+		}
+	}
+	log.Printf("Detection worker #%d shut down", id)
 }
 
 func (ds *DetectionService) AddTask(task DetectionTask) {
 	ds.queue <- task
+}
+
+func convertDetections(boxes []BoundingBox) *detections {
+	dets := make(detections, 0, len(boxes))
+	for _, box := range boxes {
+		if box.ClassId >= 0 && box.ClassId < len(openvinoConfig.ModelConfig.ClassNames) {
+			dets = append(dets, Detection{
+				Top:        box.Ymin,
+				Left:       box.Xmin,
+				Bottom:     box.Ymax,
+				Right:      box.Xmax,
+				Label:      openvinoConfig.ModelConfig.ClassNames[box.ClassId],
+				Confidence: box.Conf,
+			})
+		}
+	}
+	return &dets
 }
