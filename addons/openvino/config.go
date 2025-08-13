@@ -19,6 +19,12 @@ var (
 	openvinoConfig struct {
 		Host      string `yaml:"host"`
 		ModelName string `yaml:"model_name"`
+		NumThreads int    `yaml:"num_threads"`
+		ModelConfig struct {
+			ConfidenceThreshold float64 `yaml:"confidence_threshold"`
+			IOUThreshold        float64 `yaml:"iou_threshold"`
+			ClassNames          []string `yaml:"class_names"`
+		} `yaml:"model_config"`
 	}
 )
 
