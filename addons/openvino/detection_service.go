@@ -9,7 +9,7 @@ import (
 type DetectionTask struct {
 	StreamName   string
 	Image        image.Image
-	ResponseChan chan *detections
+	ResponseChan chan []BoundingBox
 }
 
 type DetectionService struct {
@@ -48,12 +48,12 @@ func (ds *DetectionService) worker(id int) {
 		boundingBoxes, err := ds.objectDetector.DetectObjects(task.Image)
 		if err != nil {
 			log.Printf("[Worker %d] Failed to run detection for stream %s: %v", id, task.StreamName, err)
-			task.ResponseChan <- &detections{}
+			task.ResponseChan <- []BoundingBox{}
 		} else {
 			if len(boundingBoxes) > 0 && boundingBoxes[0].ClassId == 0 {
 				log.Printf("[Worker %d] Successfully processed frame from stream %s: %v", id, task.StreamName, boundingBoxes)
 			}
-			task.ResponseChan <- convertDetections(boundingBoxes)
+			task.ResponseChan <- boundingBoxes
 		}
 	}
 	log.Printf("Detection worker #%d shut down", id)
@@ -61,21 +61,4 @@ func (ds *DetectionService) worker(id int) {
 
 func (ds *DetectionService) AddTask(task DetectionTask) {
 	ds.queue <- task
-}
-
-func convertDetections(boxes []BoundingBox) *detections {
-	dets := make(detections, 0, len(boxes))
-	for _, box := range boxes {
-		if box.ClassId >= 0 && box.ClassId < len(openvinoConfig.ModelConfig.ClassNames) {
-			dets = append(dets, Detection{
-				Top:        box.Ymin,
-				Left:       box.Xmin,
-				Bottom:     box.Ymax,
-				Right:      box.Xmax,
-				Label:      openvinoConfig.ModelConfig.ClassNames[box.ClassId],
-				Confidence: box.Conf,
-			})
-		}
-	}
-	return &dets
 }

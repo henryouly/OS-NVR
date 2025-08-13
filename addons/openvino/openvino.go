@@ -469,7 +469,7 @@ func (i *instance) runReader(ctx context.Context, stdout io.Reader) error {
 		if _, err := io.ReadAtLeast(stdout, inputBuffer, i.outputs.frameSize); err != nil {
 			return fmt.Errorf("read stdout: %w", err)
 		}
-		// t := time.Now().Add(-i.c.timestampOffset)
+		t := time.Now().Add(-i.c.timestampOffset)
 		i.watchdogTimer.Reset(10 * time.Second)
 
 		img.Pix = inputBuffer
@@ -480,7 +480,7 @@ func (i *instance) runReader(ctx context.Context, stdout io.Reader) error {
 		outputBuffer = b.Bytes()
 		i.previewCache.Set(i.c.monitorID, outputBuffer)
 
-		responseChan := make(chan *detections)
+		responseChan := make(chan []BoundingBox)
 
 		request := DetectionTask{
 			StreamName:  i.c.monitorID,
@@ -495,25 +495,24 @@ func (i *instance) runReader(ctx context.Context, stdout io.Reader) error {
 			logf(log.LevelError, "send frame: %v", err)
 			continue
 		}
-		logf(log.LevelDebug, "detections: %v", detections)
 
-		// parsed := parseDetections(i.c.minSize, i.c.maxSize, i.reverseValues, *detections)
-		// if len(parsed) == 0 {
-		// 	continue
-		// }
+		parsed := parseDetections(i.c.minSize, i.c.maxSize, i.reverseValues, detections)
+		if len(parsed) == 0 {
+			continue
+		}
 
-		// i.logf(log.LevelDebug, "trigger: label:%v score:%.1f",
-		// 	parsed[0].Label, parsed[0].Score)
+		logf(log.LevelDebug, "trigger: label:%v score:%.1f",
+			parsed[0].Label, parsed[0].Score)
 
-		// err = i.sendEvent(storage.Event{
-		// 	Time:        t,
-		// 	Detections:  parsed,
-		// 	Duration:    eventDuration,
-		// 	RecDuration: i.c.recDuration,
-		// })
-		// if err != nil {
-		// 	return fmt.Errorf("send event: %w", err)
-		// }
+		err = i.sendEvent(storage.Event{
+			Time:        t,
+			Detections:  parsed,
+			Duration:    eventDuration,
+			RecDuration: i.c.recDuration,
+		})
+		if err != nil {
+			return fmt.Errorf("send event: %w", err)
+		}
 	}
 }
 
@@ -522,21 +521,23 @@ func parseDetections(
 	maxSize float64,
 	// mask ffmpeg.Polygon,
 	reverse reverseValues,
-	detections detections,
+	detections []BoundingBox,
 ) []storage.Detection {
-	parsed := []storage.Detection{
-		// Populate parsed detections
-		// storage.Detection{
-		// 	Label: "person",
-		// 	Score: 0.9,
-		// },
+	parsed := []storage.Detection{}
+	for _, box := range detections {
+		if box.ClassId >= 0 && box.ClassId < len(openvinoConfig.ModelConfig.ClassNames) && box.ClassId == 0{
+			parsed = append(parsed, storage.Detection{
+				Label:      openvinoConfig.ModelConfig.ClassNames[box.ClassId],
+				Score:      float64(box.Conf),
+			})
+		}
 	}
 	return parsed
 }
 
-type sendRequestFunc func(context.Context, DetectionTask) (*detections, error)
+type sendRequestFunc func(context.Context, DetectionTask) ([]BoundingBox, error)
 
-func sendRequest(ctx context.Context, request DetectionTask) (*detections, error) {
+func sendRequest(ctx context.Context, request DetectionTask) ([]BoundingBox, error) {
 	res := request.ResponseChan
 	select {
 	case <-ctx.Done():
