@@ -84,7 +84,7 @@ func parseConfig(c monitor.Config) (*config, bool, error) { //nolint:funlen
 		detectorName:    "yolov8n",
 		grayMode:        false,
 		feedRate:        5.0,
-		recDuration:     120 * time.Second,
+		recDuration:     30 * time.Second,
 		useSubStream:    false,
 	}, enable, nil
 }
