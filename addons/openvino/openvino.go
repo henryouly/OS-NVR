@@ -21,14 +21,46 @@ import (
 	"time"
 )
 
+var (
+	detectionService *DetectionService
+	logf log.Func
+)
+
 func init() {
 	nvr.RegisterLogSource([]string{"openvino"})
 	nvr.RegisterMonitorInputProcessHook(onInputProcessStart)
 
 	nvr.RegisterAppRunHook(func(ctx context.Context, app *nvr.App) error {
 		onEnv(app.Env)
+		onAppRun(ctx, app)
 		return nil
 	})
+}
+
+func onAppRun(ctx context.Context, app *nvr.App) {
+	logger := app.Logger
+
+	logf = func(level log.Level, format string, a ...interface{}) {
+		logger.Log(log.Entry{
+			Level: level,
+			Src:   "openvino",
+			Msg:   fmt.Sprintf(format, a...),
+		})
+	}
+
+	// Initialize OpenVINO detector
+	objectDetector, err := NewObjectDetector(openvinoConfig.Host, openvinoConfig.ModelName, openvinoConfig.ModelConfig.InputTensor)
+	if err != nil {
+		logf(log.LevelError, "could not create object detector: %v", err)
+		return
+	}
+	// TODO: Move it to a separate scope to close
+	// defer objectDetector.Close()
+	detectionService = NewDetectionService(objectDetector)
+	detectionService.Start(openvinoConfig.NumThreads)
+
+	// wg := app.WG
+	// wg.Add(1)
 }
 
 func onEnv(env storage.ConfigEnv) {
@@ -36,7 +68,6 @@ func onEnv(env storage.ConfigEnv) {
 	var err error
 	err = parseRawConfig(configPath)
 	if err != nil {
-		fmt.Printf("openvino: config: %v, %v\n", err, configPath)
 		return
 	}
 }
@@ -75,7 +106,7 @@ func onInputProcessStart(ctx context.Context, i *monitor.InputProcess, _ *[]stri
 		case <-ctx.Done():
 			return
 		}
-		if err := start(ctx, i, *config, logf); err != nil {
+		if err := start(ctx, i, *config); err != nil {
 			logf(log.LevelError, "could not start: %v", err)
 		}
 	}()
@@ -85,7 +116,6 @@ func start(
 	ctx context.Context,
 	input *monitor.InputProcess,
 	config config,
-	logf log.Func,
 ) error {
 	// detector, err := detectorByName(config.detectorName)
 	// if err != nil {
@@ -106,7 +136,6 @@ func start(
 		if err != nil {
 			logf(log.LevelWarning, "get video track: %v", err)
 		} else {
-			logf(log.LevelInfo, "got video track: %v", videoTrack)
 			break
 		}
 		select {
@@ -133,16 +162,7 @@ func start(
 		return fmt.Errorf("calculate ffmpeg outputs: %w", err)
 	}
 
-	objectDetector, err := NewObjectDetector(openvinoConfig.Host, openvinoConfig.ModelName, openvinoConfig.ModelConfig.InputTensor)
-	if err != nil {
-		return fmt.Errorf("failed to create object detector: %w", err)
-	}
-	// TODO: Move it to a separate scope to close
-	// defer objectDetector.Close()
-	detectionService := NewDetectionService(objectDetector)
-	detectionService.Start(openvinoConfig.NumThreads)
-
-	i := newInstance(sendRequest, input, config, cache.previewCache, logf, detectionService)
+	i := newInstance(sendRequest, input, config, cache.previewCache)
 
 	i.outputs = *outputs
 	i.reverseValues = *reverseValues
@@ -164,7 +184,6 @@ type instance struct {
 	c         config
 	wg        *sync.WaitGroup
 	env       storage.ConfigEnv
-	logf      log.Func
 	sendEvent monitor.SendEventFunc
 
 	outputs       outputs
@@ -179,8 +198,6 @@ type instance struct {
 
 	// watchdogTimer restarts process if it stops outputting frames.
 	watchdogTimer *time.Timer
-
-	detectionService *DetectionService
 }
 
 func newInstance(
@@ -188,14 +205,11 @@ func newInstance(
 	i *monitor.InputProcess,
 	c config,
 	previewCache *previewCache,
-	logf log.Func,
-	detectionService *DetectionService,
 ) *instance {
 	return &instance{
 		c:         c,
 		wg:        i.WG,
 		env:       i.Env,
-		logf:      logf,
 		sendEvent: i.SendEvent,
 
 		newProcess:  ffmpeg.NewProcess,
@@ -205,7 +219,6 @@ func newInstance(
 			CompressionLevel: png.BestSpeed,
 		},
 		previewCache: previewCache,
-		detectionService: detectionService,
 	}
 }
 
@@ -372,9 +385,9 @@ func (i *instance) startProcess(parentCtx context.Context) {
 		ctx, cancel := context.WithCancel(parentCtx)
 		err := i.runProcess(ctx, cancel)
 		if err != nil && !errors.Is(err, context.Canceled) {
-			i.logf(log.LevelError, "detector crashed: %v", err)
+			logf(log.LevelError, "detector crashed: %v", err)
 		} else {
-			i.logf(log.LevelInfo, "detector stopped")
+			logf(log.LevelInfo, "detector stopped")
 		}
 		cancel()
 
@@ -390,7 +403,7 @@ func (i *instance) runProcess(ctx context.Context, cancel context.CancelFunc) er
 	cmd := exec.Command(i.env.FFmpegBin, i.ffArgs...)
 
 	processLogFunc := func(msg string) {
-		i.logf(log.FFmpegLevel(i.c.ffmpegLogLevel), "process: %v", msg)
+		logf(log.FFmpegLevel(i.c.ffmpegLogLevel), "process: %v", msg)
 	}
 
 	process := i.newProcess(cmd).
@@ -405,14 +418,14 @@ func (i *instance) runProcess(ctx context.Context, cancel context.CancelFunc) er
 		if ctx.Err() != nil {
 			return
 		}
-		i.logf(log.LevelError, "watchdog: process stopped outputting frames, restarting")
+		logf(log.LevelError, "watchdog: process stopped outputting frames, restarting")
 		cancel()
 	})
 
 	i.wg.Add(1)
 	go i.startReader(ctx, cancel, i, stdout)
 
-	i.logf(log.LevelInfo, "starting process: %v", cmd)
+	logf(log.LevelInfo, "starting process: %v", cmd)
 
 	err = process.Start(ctx) // Blocks until process exists.
 	if err != nil && !errors.Is(err, context.Canceled) {
@@ -438,9 +451,9 @@ func startReader(
 
 	err := i.runReader(ctx, stdout)
 	if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
-		i.logf(log.LevelError, "instance crashed: %v", err)
+		logf(log.LevelError, "instance crashed: %v", err)
 	} else {
-		i.logf(log.LevelInfo, "instance stopped")
+		logf(log.LevelInfo, "instance stopped")
 	}
 	cancel()
 }
@@ -477,7 +490,7 @@ func (i *instance) runReader(ctx context.Context, stdout io.Reader) error {
 		// ctx2, cancel := context.WithTimeout(ctx, eventDuration*2)
 		// defer cancel()
 		// i.detectionService.AddTask(ctx2, request)
-		i.detectionService.AddTask(request)
+		detectionService.AddTask(request)
 
 		// parsed := parseDetections(i.c.minSize, i.c.maxSize, i.reverseValues, *detections)
 		// if len(parsed) == 0 {
