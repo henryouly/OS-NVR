@@ -23,7 +23,17 @@ var (
 		ModelConfig struct {
 			ConfidenceThreshold float64 `yaml:"confidence_threshold"`
 			IOUThreshold        float64 `yaml:"iou_threshold"`
+			NumClasses          int      `yaml:"num_classes"`
 			ClassNames          []string `yaml:"class_names"`
+			Preprocess          struct {
+				Resize struct {
+					Width  int `yaml:"width"`
+					Height int `yaml:"height"`
+				} `yaml:"resize"`
+				Normalize struct {
+					Mean   []float64 `yaml:"mean"`
+				} `yaml:"normalize"`
+			} `yaml:"preprocess"`
 		} `yaml:"model_config"`
 	}
 )
